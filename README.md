@@ -1,6 +1,6 @@
 # 5D-data_IFC-integration
 IfcOpenShell-based Python script for writing cost data into IFC models and linking them to building elements through GlobalId.
-Description of the script and the workflow will be available in the paper "Interoperable 5D openBIM: cost data integration workflow and visualization challenges", which will be published soon.
+Description of the script and the workflow will be available in the paper "Interoperable 5D openBIM: cost data integration workflow and IFC-based analysis challenges", which will be published soon.
 
 Script UML diagram:
 <img width="15605" height="5629" alt="img_2_300dpi" src="https://github.com/user-attachments/assets/72a8d0c0-18b0-4bef-8ca7-64d7450f99c9" />
