@@ -6,26 +6,29 @@ import time
 import os
 import math
 
-#region COLUMNS TO IMPORT
-# Define the column names to import from the Excel/CSV file for TOTAL COST AND UNIT COST
-column_guid="GUID Oggetto BIM"
-column_quantity="Quantità"
-column_unitMeasure="Des. U.M."
-column_totalCost="Importo totale (Costo)"
-column_unitCost="Prezzo totale (Costo)"
-column_costItemName="Articolo"
-column_costItemDescription="Breve"
-column_categoria="Categoria"
-# Define the column names to import from the Excel/CSV file for PRICE LIST
-column_parent_code = "Codice"
-column_child_code = "Cod. Articolo"
-column_pa_prezzoElementare = "Prezzo elementare"
-column_pa_valoreQuantita = "Valore quantità"
-column_pa_descrizioneArticolo = "Des. Articolo"
-column_pa_unitaMisura = "Unita' di misura"
-column_pa_categoria = "Categoria"
+#region INPUTS
+# [REQUIRED] Define the column names to import from the Excel/CSV file for TOTAL COST AND UNIT COST.
+column_guid="GUID Oggetto BIM"  # [STRING] GlobalId of IFC elements.
+column_quantity="Quantità"  # [NUMBER] Computed quantity associated with the cost item. Must be numbers withouth currency symbols or text. If not valid, it will be set to 0.
+column_unitMeasure="Des. U.M."  # [STRING] Quantity unit of measure.
+column_totalCost="Importo totale (Costo)"  # [NUMBER] Total amount of the cost item. Must be numbers withouth currency symbols or text. If not valid, it will be set to 0.
+column_unitCost="Prezzo totale (Costo)"  # [NUMBER] Unit price reported for the cost item. Must be numbers withouth currency symbols or text. If not valid, it will be set to 0.
+column_costItemName="Articolo"  # [STRING] Code or name of the cost item.
+column_costItemDescription="Breve"  # [STRING] Short description of the cost item.
+column_categoria="Categoria"  # [STRING, OPTIONAL] Category assigned to the cost item. (Possible values: "Material", "Labor", "Equipment")
 
-csv_delimiter = ";"
+# [OPTIONAL] Define the column names to import from the Excel/CSV file for PRICE LIST.
+column_parent_code = "Codice"  # [STRING] Code of the main item in the price list.
+column_child_code = "Cod. Articolo"  # [STRING] Code of the elementary item linked to the main item.
+column_pa_prezzoElementare = "Prezzo elementare"  # [NUMBER] Unit price of the analysis element. Must be numbers withouth currency symbols or text. If not valid, it will be set to 0.
+column_pa_valoreQuantita = "Valore quantità"  # [NUMBER] Quantity value used for the price analysis element. Must be numbers withouth currency symbols or text. If not valid, it will be set to 0.
+column_pa_descrizioneArticolo = "Des. Articolo"  # [STRING] Description of the elementary item.
+column_pa_unitaMisura = "Unita' di misura"  # [STRING] Unit of measure of the elementary item.
+column_pa_categoria = "Categoria"  # [STRING, OPTIONAL] Category assigned to the price list item. (Possible values: "Material", "Labor", "Equipment")
+
+# [REQUIRED] Other inputs.
+monetary_unit = "EUR"  # Currency for cost values. (Possible values: "EUR", "USD")
+csv_delimiter = ";"  # Delimiter used to read CSV files.
 #endregion
 
 #region SELECT FILES - IFC, EXCEL/CSV, PRICE LIST
@@ -69,55 +72,114 @@ print(f"Time to load IFC file: {end_ifc - start_ifc:.2f} seconds")
 if not ifc_file.schema.upper().startswith("IFC4"):
     raise ValueError(f"Unsupported IFC schema: {ifc_file.schema}. Please use an IFC4 or later file.")
 
-columns_to_import = [column_guid, column_quantity, column_unitMeasure, column_unitCost, column_totalCost, column_costItemName, column_costItemDescription, column_categoria]
-start_data = time.time()
-file_ext = os.path.splitext(data_path)[1].lower()
-try:
-    if file_ext == ".xlsx":
-        data = pd.read_excel(data_path, usecols=columns_to_import)
+def parse_number(value):
+    if pd.isna(value):
+        return float("nan")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+
+    text = str(value).strip()
+    if not text:
+        return float("nan")
+
+    text = text.replace(" ", "").replace("\u00a0", "").replace("'", "").replace("€", "")
+    has_comma = "," in text
+    has_dot = "." in text
+
+    if has_comma and has_dot:
+        if text.rfind(",") > text.rfind("."):
+            text = text.replace(".", "").replace(",", ".")
+        else:
+            text = text.replace(",", "")
+    elif has_comma:
+        text = text.replace(",", ".")
+
+    parsed_value = pd.to_numeric(text, errors="coerce")
+    if pd.isna(parsed_value):
+        return float("nan")
+    return float(parsed_value)
+
+def normalize_numeric_columns(table, numeric_columns):
+    for column_name in numeric_columns:
+        if column_name in table.columns:
+            table[column_name] = table[column_name].map(parse_number)
+    return table
+
+def read_table_with_optional_columns(file_path, required_columns, optional_column_defaults=None, numeric_columns=None):
+    optional_column_defaults = optional_column_defaults or {}
+    numeric_columns = numeric_columns or []
+    columns_to_import = required_columns + list(optional_column_defaults.keys())
+    file_ext = os.path.splitext(file_path)[1].lower()
+
+    def validate_columns(available_columns):
+        missing_required_columns = [col for col in required_columns if col not in available_columns]
+        if missing_required_columns:
+            raise ValueError(f"Missing required columns: {missing_required_columns}")
+        return [col for col in columns_to_import if col in available_columns]
+
+    if file_ext in [".xlsx", ".xls"]:
+        available_columns = pd.read_excel(file_path, nrows=0).columns
+        selected_columns = validate_columns(available_columns)
+        table = pd.read_excel(file_path, usecols=selected_columns)
     elif file_ext == ".csv":
-        try:
-            data = pd.read_csv(data_path, usecols=columns_to_import, encoding="utf-8", sep=csv_delimiter, engine="python")
-        except UnicodeDecodeError:
-            data = pd.read_csv(data_path, usecols=columns_to_import, encoding="latin1", sep=csv_delimiter, engine="python")  # o "ISO-8859-1"
-        # Ora filtra solo le colonne desiderate
-        data = data[[col for col in columns_to_import if col in data.columns]]
+        for csv_encoding in ["utf-8", "latin1"]:
+            try:
+                available_columns = pd.read_csv(file_path, nrows=0, encoding=csv_encoding, sep=csv_delimiter, engine="python").columns
+                selected_columns = validate_columns(available_columns)
+                table = pd.read_csv(file_path, usecols=selected_columns, encoding=csv_encoding, sep=csv_delimiter, engine="python")
+                break
+            except UnicodeDecodeError:
+                if csv_encoding == "latin1":
+                    raise
     else:
-        raise ValueError("Unsupported file format. Please select a .xlsx or .csv file.")
+        raise ValueError("Unsupported file format. Please select a .xlsx, .xls or .csv file.")
+
+    for column_name, default_value in optional_column_defaults.items():
+        if column_name not in table.columns:
+            table[column_name] = default_value
+
+    table = normalize_numeric_columns(table, numeric_columns)
+
+    return table[columns_to_import]
+
+required_columns_to_import = [column_guid, column_quantity, column_unitMeasure, column_unitCost, column_totalCost, column_costItemName, column_costItemDescription]
+start_data = time.time()
+try:
+    df_totalCost = read_table_with_optional_columns(
+        data_path,
+        required_columns_to_import,
+        optional_column_defaults={column_categoria: "Uncategorized"},
+        numeric_columns=[column_quantity, column_unitCost, column_totalCost],
+    )
 except ValueError as e:
     raise ValueError(f"Error reading data file: {e}")
 
 end_data = time.time()
 print(f"Time to load data file: {end_data - start_data:.2f} seconds")
 print("Preview of selected columns:")
-print(data.head())
+print(df_totalCost.head())
 
 # Read analysis prices CSV
-pa_columns_to_import = [column_parent_code, column_child_code, column_pa_prezzoElementare, column_pa_valoreQuantita, column_pa_descrizioneArticolo, column_pa_unitaMisura, column_pa_categoria]
+pa_required_columns_to_import = [column_parent_code, column_child_code, column_pa_prezzoElementare, column_pa_valoreQuantita, column_pa_descrizioneArticolo, column_pa_unitaMisura]
+pa_columns_to_import = pa_required_columns_to_import + [column_pa_categoria]
 if analysis_loaded:
     start_data = time.time()
-    file_ext = os.path.splitext(analysis_path)[1].lower()
     try:
-        if file_ext == ".xlsx":
-            analysis_df = pd.read_excel(analysis_path, usecols=pa_columns_to_import)
-        elif file_ext == ".csv":
-            try:
-                analysis_df = pd.read_csv(analysis_path, usecols=pa_columns_to_import, encoding="utf-8", sep=csv_delimiter, engine="python")
-            except UnicodeDecodeError:
-                analysis_df = pd.read_csv(analysis_path, usecols=pa_columns_to_import, encoding="latin1", sep=csv_delimiter, engine="python")  # o "ISO-8859-1"
-            # Ora filtra solo le colonne desiderate
-            analysis_df = analysis_df[[col for col in pa_columns_to_import if col in analysis_df.columns]]
-        else:
-            raise ValueError("Unsupported file format. Please select a .xlsx or .csv file.")
+        df_priceAnalysis = read_table_with_optional_columns(
+            analysis_path,
+            pa_required_columns_to_import,
+            optional_column_defaults={column_pa_categoria: "Uncategorized"},
+            numeric_columns=[column_pa_prezzoElementare, column_pa_valoreQuantita],
+        )
     except ValueError as e:
         raise ValueError(f"Error reading data file: {e}")
 
     end_data = time.time()
     print(f"Time to load price analysis data file: {end_data - start_data:.2f} seconds")
     print("Preview of selected columns:")
-    print(analysis_df.head())
+    print(df_priceAnalysis.head())
 else:
-    analysis_df = pd.DataFrame(columns=pa_columns_to_import)
+    df_priceAnalysis = pd.DataFrame(columns=pa_columns_to_import)
     print("No analysis prices file selected. Continuing without price analysis.")
 #endregion
 
@@ -158,13 +220,9 @@ dimensionalExponents_Mass = ifc_file.create_entity(
     LuminousIntensityExponent=0,
 )
 
-monetaryUnit_EUR = ifc_file.create_entity(
+monetaryUnit = ifc_file.create_entity(
     "IfcMonetaryUnit",
-    "EUR"
-)
-monetaryUnit_USD = ifc_file.create_entity(
-    "IfcMonetaryUnit",
-    "USD"
+    monetary_unit
 )
 areaUnit_squareMetre = ifc_file.create_entity(
     "IfcSIUnit",
@@ -227,6 +285,48 @@ contextDependentUnit_scatola = ifc_file.create_entity(
     UnitType="USERDEFINED",
     Name="scatola"
 )
+
+
+# Add created units to the existing IfcUnitAssignment
+# Serve per aggiugnere le nuove unità a IfcUnitAssignment per collegarle ad una entità rooted (IfcProject)
+# il problema è che solitamente esistono già queste classi create e in IfcUnitAssignment non possono esserci definizioni duplicate
+# quindi sarebbe da verificare se esistono già queste unità e se non esistono aggiungerle
+# tuttavia per ora lasciamo così senza aggiungerle
+# units_to_add = [
+#     monetaryUnit,
+#     monetaryUnit_USD,
+#     areaUnit_squareMetre,
+#     volumeUnit_cubicMetre,
+#     lengthUnit_Metre,
+#     massUnit_Gram,
+#     timeUnit_Second,
+#     contextDependentUnit_cad,
+#     contextDependentUnit_m2cm,
+#     contextDependentUnit_m2mm,
+#     contextDependentUnit_perc,
+#     contextDependentUnit_acorpo,
+#     contextDependentUnit_scatola,
+# ]
+
+# unit_assignments = ifc_file.by_type("IfcUnitAssignment")
+# if unit_assignments:
+#     unit_assignment = unit_assignments[0]
+#     existing_units = list(unit_assignment.Units or [])
+
+#     for unit in units_to_add:
+#         if unit not in existing_units:
+#             existing_units.append(unit)
+
+#     unit_assignment.Units = existing_units
+# else:
+#     unit_assignment = ifc_file.create_entity(
+#         "IfcUnitAssignment",
+#         Units=units_to_add
+#     )
+#     project = ifc_file.by_type("IfcProject")[0]
+#     project.UnitsInContext = unit_assignment
+
+
 conversionBasedUnit_hour = ifc_file.create_entity(
     "IfcConversionBasedUnit",
     Dimensions=dimensionalExponents_Time,
@@ -507,6 +607,25 @@ def create_unit_basis(quantita,unita_misura,usage="unit"):
             )
         elif (usage == "unit"):
             return unitbasis_scatola
+    else:
+        unit_component = ifc_file.create_entity(
+            "IfcContextDependentUnit",
+            Dimensions=dimensionalExponents_0000000,
+            UnitType="USERDEFINED",
+            Name=unita_misura
+        )
+        if (usage=="total"):
+            unitbasis = ifc_file.create_entity(
+                "IfcMeasureWithUnit",
+                ValueComponent=ifc_file.create_entity("IfcReal", quantita),
+                UnitComponent=unit_component
+            )
+        elif (usage == "unit"):
+            unitbasis = ifc_file.create_entity(
+                "IfcMeasureWithUnit",
+                ValueComponent=ifc_file.create_entity("IfcReal", 1),
+                UnitComponent=unit_component
+            )
     return unitbasis
 #endregion
 
@@ -527,7 +646,7 @@ def get_or_create_unit_cost(prezzo_unitario, articolo, breve, unita_misura, comp
                 AppliedValue=ifc_file.create_entity(
                     "IfcMeasureWithUnit",
                     ValueComponent=ifc_file.create_entity("IfcReal", prezzo_unitario),
-                    UnitComponent=monetaryUnit_EUR
+                    UnitComponent=monetaryUnit
                 ),
                 UnitBasis=unit_basis,
                 Category=category,
@@ -540,7 +659,7 @@ def get_or_create_unit_cost(prezzo_unitario, articolo, breve, unita_misura, comp
                 AppliedValue=ifc_file.create_entity(
                     "IfcMeasureWithUnit",
                     ValueComponent=ifc_file.create_entity("IfcReal", prezzo_unitario),
-                    UnitComponent=monetaryUnit_EUR
+                    UnitComponent=monetaryUnit
                 ),
                 UnitBasis=unit_basis,
                 Category=category,
@@ -563,7 +682,7 @@ def get_or_create_price_analysis(prezzo_unitario, articolo, breve, unita_misura,
             AppliedValue=ifc_file.create_entity(
                 "IfcMeasureWithUnit",
                 ValueComponent=ifc_file.create_entity("IfcReal", prezzo_unitario),
-                UnitComponent=monetaryUnit_EUR
+                UnitComponent=monetaryUnit
             ),
             UnitBasis=pa_unit_basis,
             Category=category,
@@ -576,7 +695,7 @@ def get_or_create_price_analysis(prezzo_unitario, articolo, breve, unita_misura,
 guid_notfound = []
 guid_found = []
 
-for index, row in data.iterrows(): #loop over each row of excel file
+for index, row in df_totalCost.iterrows(): #loop over each row of excel file
     #read columns of imported excel or csv file
     guid = row[column_guid]
     importo_totale = row[column_totalCost]
@@ -611,7 +730,7 @@ for index, row in data.iterrows(): #loop over each row of excel file
     pa_children = []
     if analysis_loaded:
         # --- PRICE ANALYSIS ---
-        analysis_rows = analysis_df[analysis_df[column_parent_code] == articolo]
+        analysis_rows = df_priceAnalysis[df_priceAnalysis[column_parent_code] == articolo]
         #print("analysis_rows:", analysis_rows)
 
         if analysis_rows.empty:
@@ -650,7 +769,7 @@ for index, row in data.iterrows(): #loop over each row of excel file
                 ValueComponent=ifc_file.create_entity(
                     "IfcReal",
                     importo_totale),
-                UnitComponent=monetaryUnit_EUR
+                UnitComponent=monetaryUnit
                 ),
             UnitBasis=unit_basis,
             Category="Total cost",
@@ -665,7 +784,7 @@ for index, row in data.iterrows(): #loop over each row of excel file
                 ValueComponent=ifc_file.create_entity(
                     "IfcReal",
                     importo_totale),
-                UnitComponent=monetaryUnit_EUR
+                UnitComponent=monetaryUnit
                 ),
             UnitBasis=unit_basis,
             Category="Total cost",
