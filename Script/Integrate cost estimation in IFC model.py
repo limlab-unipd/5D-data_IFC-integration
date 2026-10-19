@@ -725,11 +725,12 @@ for index, row in df_totalCost.iterrows(): #loop over each row of excel file
         target_element = target_element[0] if target_element else None
         #print(f"Row {index} GUID is missing or invalid. Defaulting to IfcProject.")
         guid_missing.append(guid)
-        guid_missing_valid_cost_item.append(guid)
         if (importo_totale is None or articolo is None or breve is None or prezzo_unitario is None or quantita is None or unita_misura is None):
             #print(f"Row {index} skipped: Missing required data for cost item creation.")
             guid_missing_invalid_cost_item.append(guid)
             continue  # Skip this row if any required data is missing
+        guid = target_element.GlobalId if target_element else None  # Use the GlobalId of IfcProject as a fallback
+        guid_missing_valid_cost_item.append(guid)
     else:
         try:
             target_element = ifc_file.by_guid(guid)
