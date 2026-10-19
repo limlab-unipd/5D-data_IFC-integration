@@ -694,6 +694,10 @@ def get_or_create_price_analysis(prezzo_unitario, articolo, breve, unita_misura,
 #region CREATE AND ADD COST ITEMS TO IFC MODEL
 guid_notfound = []
 guid_found = []
+guid_missing = []
+guid_missing_valid_cost_item = []
+guid_missing_invalid_cost_item = []
+total_rows = len(df_totalCost)
 
 for index, row in df_totalCost.iterrows(): #loop over each row of excel file
     #read columns of imported excel or csv file
@@ -716,16 +720,29 @@ for index, row in df_totalCost.iterrows(): #loop over each row of excel file
     unita_misura = row[column_unitMeasure]
     categoria = row[column_categoria] if column_categoria in row else "Uncategorized"
 
-    try:
-        target_element = ifc_file.by_guid(guid)
-        if not target_element: #if element is not found skip the entire iteration and go to the next one
+    if (guid is None or guid == 'nan' or guid == '' or pd.isna(guid)):
+        target_element = ifc_file.by_type("IfcProject")  # Default to IfcProject if GUID is missing
+        target_element = target_element[0] if target_element else None
+        #print(f"Row {index} GUID is missing or invalid. Defaulting to IfcProject.")
+        guid_missing.append(guid)
+        guid_missing_valid_cost_item.append(guid)
+        if (importo_totale is None or articolo is None or breve is None or prezzo_unitario is None or quantita is None or unita_misura is None):
+            #print(f"Row {index} skipped: Missing required data for cost item creation.")
+            guid_missing_invalid_cost_item.append(guid)
+            continue  # Skip this row if any required data is missing
+    else:
+        try:
+            target_element = ifc_file.by_guid(guid)
+            if not target_element: #if element is not found skip the entire iteration and go to the next one
+                #print(f"Row {index} skipped: Element with GUID {guid} not found.")
+                guid_notfound.append(guid)
+                continue
+        except Exception as e:
+            #print(f"Error searching for GUID {guid}: {e}")
+            #print(f"Row {index} skipped: Error occurred while searching for GUID {guid}.")
             guid_notfound.append(guid)
             continue
-    except Exception as e:
-        #print(f"Error searching for GUID {guid}: {e}")
-        guid_notfound.append(guid)
-        continue
-    guid_found.append(guid) #only to keep count of iterations
+        guid_found.append(guid) #only to keep count of iterations
     
     pa_children = []
     if analysis_loaded:
@@ -827,6 +844,10 @@ for index, row in df_totalCost.iterrows(): #loop over each row of excel file
 # all the file wil be exported in the folder of the script
 print("Found guids: ",len(guid_found))
 print("Not found guids: ",len(guid_notfound))
+print("Missing guids: ",len(guid_missing))
+print("Missing guids with valid cost item: ",len(guid_missing_valid_cost_item))
+print("Missing guids with invalid cost item: ",len(guid_missing_invalid_cost_item))
+print("Total rows processed: ",total_rows)
 
 # export new ifc file with costs added in the same directory of ifc file
 if (analysis_loaded):
