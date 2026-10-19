@@ -29,6 +29,8 @@ The script performs the following operations:
 8. exports a new cost-enriched IFC file;
 9. exports two traceability files listing the GUIDs that were found and not found in the IFC model.
 
+Note: if a row does not have a `GlobalId` value and cost item data are valid it creates the cost item and links it to the IfcProject instance. 
+
 ## Repository structure
 
 ```text
@@ -58,7 +60,7 @@ The input model must be an IFC file using the IFC4 schema or a later version. Th
 
 The main cost-estimation file can be provided as `.csv`, `.xlsx`, or `.xls`. For `.csv` files, the script currently uses `;` as delimiter.
 
-The expected column names are:
+The expected default column names are**:
 
 | Column | Meaning |
 | --- | --- |
@@ -75,7 +77,7 @@ The expected column names are:
 
 The price-analysis file is optional and must be provided as `.csv`. It is used to describe the components that contribute to the unit cost.
 
-The expected column names are:
+The expected default column names are**:
 
 | Column | Meaning |
 | --- | --- |
@@ -87,12 +89,14 @@ The expected column names are:
 | `Unita' di misura` | Component unit of measure |
 | `Categoria` | Component category, such as material, labor, or equipment |
 
+** You can modify the columns names as you prefer modifying the INPUT variables at the beginning of the script (it needs to be opened in an editor).
+
 ## How to run the script
 
 From the repository root, run:
 
 ```bash
-python "Script/20260507_Integrate cost estimation in IFC model.py"
+python "Script/Integrate cost estimation in IFC model.py"
 ```
 
 The script opens file-selection dialogs and asks the user to select:
